@@ -112,16 +112,39 @@ float OutputVoltage = 0;                      //
 
 // String Mode ="  ";                            //used to identify which mode
 uint8_t mode;
-#define CC_MODE 1
-#define CV_MODE 2
-#define CR_MODE 3
-#define CP_MODE 4
-#define TT_MODE 5
-#define TL_MODE 6
-#define TC_MODE 7
-#define TP_MODE 8
-#define BC_MODE 9
-#define NUMBER_OF_MODES 9
+uint8_t option;
+
+enum {
+  CC_MODE, CV_MODE, CR_MODE, CP_MODE,
+  TT_MODE, TL_MODE, TC_MODE, TP_MODE,
+  BC_MODE
+};
+
+enum {
+  CC_OPTION, CV_OPTION, CR_OPTION, CP_OPTION,
+  TRANSIENT_OPTION, BATCAP_OPTION
+};
+#define MAX_OPTIONS 6
+
+struct menuoption {
+  uint8_t option;
+  uint8_t mode;
+  char text[10];
+  uint8_t x, y;
+  uint8_t nextoptidx;
+};
+
+struct menuoption menubuf;
+
+const struct menuoption PROGMEM options[] = {
+  {CC_OPTION,CC_MODE,"CC",4,2,1},
+  {CV_OPTION,CV_MODE,"CV",8,2,2},
+  {CR_OPTION,CR_MODE,"CR",12,2,3},
+  {CP_OPTION,CP_MODE,"CP",16,2,4},
+  {TRANSIENT_OPTION,0,"TRANSIENT",1,3,5},
+  {BATCAP_OPTION,BC_MODE,"BATCAP",12,3,0}
+};
+
 
 int modeSelected = 0;                         //Mode status flag
 
@@ -241,6 +264,7 @@ void setup() {
 
   nextconvstate = CONVSTATE_CONVERTVOLTS; // initialize read state machine
   mode = CC_MODE;
+  option = CC_OPTION;
   modeselect=false;
   togglemodemenu=false;
 }
@@ -285,30 +309,39 @@ void loop()
 
     if (encbutton == SHORT_PRESS) {
       coarse_flag = !coarse_flag;
-    } else if (!togglemodemenu && encbutton == LONG_PRESS) {
-      Serial.println("you hit a snag");
-      userSetUp();
-    }
+    } 
 
-    if (!togglemodemenu && loadbutton == SHORT_PRESS) {
-      LoadSwitch();
-      Serial.println("longpress");
-    }
 
-    if (!togglemodemenu && loadbutton==LONG_PRESS) { // enter toggle menu
-      togglemodemenu = true;
-      LoadOff();
-      printOptions();
-    } else if (togglemodemenu && loadbutton==SHORT_PRESS) {
-      rotate_modes();
-      printOptions();
-    } else if (togglemodemenu && loadbutton==LONG_PRESS) {
-      togglemodemenu=false;
-      printClear();
-      setMode(mode);
-    }
 
-    if (!togglemodemenu) {
+    if (togglemodemenu) {
+
+      if (loadbutton==SHORT_PRESS) {
+        nextOption();
+        //option = rotate_modes();
+        printOptions();
+      }
+      else if (loadbutton==LONG_PRESS) {
+        togglemodemenu=false;
+        setMode();
+        printClear();
+        printMode();
+      }
+
+    } else { // main menu
+
+      if (encbutton == LONG_PRESS) {
+        userSetUp();
+      }
+      if (loadbutton == SHORT_PRESS) {
+        LoadSwitch();
+        Serial.println("longpress");
+      }
+      else if (loadbutton==LONG_PRESS) {
+        togglemodemenu = true;
+        LoadOff();
+        printOptions();
+      }
+
       switch(mode) {
 
         case CC_MODE: case CV_MODE: case CR_MODE: case CP_MODE:
@@ -320,7 +353,7 @@ void loop()
           break;
 
         case BC_MODE:
-          //batteryCapacity();
+          batteryCapacity();
           break;
 
         default:
@@ -544,31 +577,61 @@ void printMode(void) {
 }
 
 void printOptions(void) {
-  Serial.println("printOptions");
-  int xpos=0, ypos;
   lcd.setCursor(0,2);
-  lcd.print("   CC  CV  CR  CP   ");
+  lcd.print("                    ");
   lcd.setCursor(0,3);
-  lcd.print(" TT  TL  TC  TP  BC ");
-  if (mode<5) {
-    ypos=2;
-    xpos=(mode-1)*4 + 2;
-  } else {
-    ypos=3;
-    xpos=(mode-5)*4;
+  lcd.print("                    ");
+  uint8_t arraysize = sizeof(options)/sizeof(options[0]);
+  for(int i=0; i<arraysize; i++) {
+    memcpy_P(&menubuf,&options[i],sizeof(menuoption));
+    lcd.setCursor(menubuf.x, menubuf.y);
+    lcd.print(menubuf.text);
   }
-  lcd.setCursor(xpos,ypos);
+
+  // get current menu option
+  memcpy_P(&menubuf,&options[option],sizeof(menuoption));
+
+  // print clams
+  lcd.setCursor(menubuf.x-1,menubuf.y);
   lcd.print("[");
-  lcd.setCursor(xpos+3,ypos);
+  lcd.setCursor(menubuf.x+strlen(menubuf.text),menubuf.y);
   lcd.print("]");
   lcd.noCursor();
 }
 
-void rotate_modes(void) {
-  mode++;
-  if(mode>NUMBER_OF_MODES) mode=1;
-  Serial.print("mode ");
-  Serial.println(mode);
+void nextOption(void) {
+  /*
+     |DC LOAD OFF      5'C|
+     |0.000A 0.000V 0.00W |
+     |  [CC] CV  CR  CP
+     | TRANSIENT  BATTCAP
+  */
+  memcpy_P(&menubuf,&options[option],sizeof(menuoption));
+  option = menubuf.nextoptidx;
+  printOptions();
+
+  Serial.print("option ");
+  Serial.println(option);
+}
+
+void setMode(void) {
+  memcpy_P(&menubuf,&options[option],sizeof(menuoption));
+  if(menubuf.mode!=0) {
+    mode = menubuf.mode;
+  } else {
+
+  }
+
+  if(mode==CP_MODE)
+    Power();
+  else if (mode==CC_MODE)
+    Current();
+  else if (mode==CV_MODE)
+    Voltage();
+  else if (mode==CR_MODE)
+    Resistance();
+  else
+    lcd.print("??");
 }
 
 void printClear(void) {
@@ -1132,34 +1195,6 @@ void LoadOn(void) {
 	printLoadOn();
   toggle = true;
   Load = 1;
-}
-
-void setMode(uint8_t _mode) {
-  switch(_mode) {
-    case CC_MODE:
-      Current();
-      break;
-    case CV_MODE:
-      Voltage();
-      break;
-    case CR_MODE:
-      Resistance();
-      break;
-    case CP_MODE:
-      Power();
-      break;
-    
-    case TT_MODE: case TL_MODE: case TC_MODE: case TP_MODE:
-      //transientLoadToggle();
-      break;
-      
-    case BC_MODE:
-      //batteryCapacity();
-      break;
-      
-    default:
-      break;
-  }
 }
 
 //-----------------------Select Constant Current LCD set up--------------------------------
