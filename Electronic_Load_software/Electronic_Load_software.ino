@@ -137,10 +137,10 @@ struct menuoption {
 struct menuoption menubuf;
 
 const struct menuoption PROGMEM options[] = {
-  {CC_OPTION,CC_MODE,"CC",4,2,1},
-  {CV_OPTION,CV_MODE,"CV",8,2,2},
-  {CR_OPTION,CR_MODE,"CR",12,2,3},
-  {CP_OPTION,CP_MODE,"CP",16,2,4},
+  {CC_OPTION,CC_MODE,"CC",3,2,1},
+  {CV_OPTION,CV_MODE,"CV",7,2,2},
+  {CR_OPTION,CR_MODE,"CR",11,2,3},
+  {CP_OPTION,CP_MODE,"CP",15,2,4},
   {TRANSIENT_OPTION,0,"TRANSIENT",1,3,5},
   {BATCAP_OPTION,BC_MODE,"BATCAP",12,3,0}
 };
@@ -311,8 +311,6 @@ void loop()
       coarse_flag = !coarse_flag;
     } 
 
-
-
     if (togglemodemenu) {
 
       if (loadbutton==SHORT_PRESS) {
@@ -323,7 +321,6 @@ void loop()
       else if (loadbutton==LONG_PRESS) {
         togglemodemenu=false;
         setMode();
-        printClear();
         printMode();
       }
 
@@ -334,7 +331,6 @@ void loop()
       }
       if (loadbutton == SHORT_PRESS) {
         LoadSwitch();
-        Serial.println("longpress");
       }
       else if (loadbutton==LONG_PRESS) {
         togglemodemenu = true;
@@ -577,10 +573,8 @@ void printMode(void) {
 }
 
 void printOptions(void) {
-  lcd.setCursor(0,2);
-  lcd.print("                    ");
-  lcd.setCursor(0,3);
-  lcd.print("                    ");
+  printClearLine(2);
+  printClearLine(3);
   uint8_t arraysize = sizeof(options)/sizeof(options[0]);
   for(int i=0; i<arraysize; i++) {
     memcpy_P(&menubuf,&options[i],sizeof(menuoption));
@@ -600,28 +594,13 @@ void printOptions(void) {
 }
 
 void nextOption(void) {
-  /*
-     |DC LOAD OFF      5'C|
-     |0.000A 0.000V 0.00W |
-     |  [CC] CV  CR  CP
-     | TRANSIENT  BATTCAP
-  */
   memcpy_P(&menubuf,&options[option],sizeof(menuoption));
   option = menubuf.nextoptidx;
-  printOptions();
-
-  Serial.print("option ");
-  Serial.println(option);
 }
 
 void setMode(void) {
   memcpy_P(&menubuf,&options[option],sizeof(menuoption));
-  if(menubuf.mode!=0) {
-    mode = menubuf.mode;
-  } else {
-
-  }
-
+  mode = menubuf.mode;
   if(mode==CP_MODE)
     Power();
   else if (mode==CC_MODE)
@@ -634,9 +613,8 @@ void setMode(void) {
     lcd.print("??");
 }
 
-void printClear(void) {
-  Serial.println("printClear");
-  lcd.setCursor(0,3);
+void printClearLine(uint8_t line) {
+  lcd.setCursor(0,line);
   lcd.print("                    ");
 }
 
@@ -673,8 +651,6 @@ void SetupLimitsScreen(void) {
 void printLoadOn(void) {
   lcd.setCursor(8,0);
   lcd.print("ON ");
-  lcd.setCursor(0,3);
-  lcd.print("                    ");  //clear bottom line of LCD
   digitalWrite(LoadLED,1);
 }
 
@@ -1267,7 +1243,7 @@ void Voltage(void) {
   lcd.print("Set V = ");
   lcd.setCursor(16,2);
   lcd.print("    ");
-  lcd.setCursor(14,2);
+  lcd.setCursor(15,2);
   lcd.print("V");
   lcd.setCursor(0,3);                                   //clear last line of time info
   lcd.print("                    ");                    //20 spaces so as to allow for Load ON/OFF to still show
