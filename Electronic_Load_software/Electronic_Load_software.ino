@@ -78,7 +78,7 @@ unsigned long controlVoltage = 0;             //used for DAC to control MOSFET
 long adc_current = 0;                         //variable used by ADC for measuring the current
 long adc_voltage = 0;                         //variable used by ADC for measuring the voltage
 
-float setCurrent = 0;                         //variable used for the set current of the load
+int setCurrent = 0;                         //variable used for the set current of the load
 float setPower = 0;                           //variable used for the set power of the load
 float setResistance = 0;                      //variable used for the set resistance of the load
 float setCurrentCalibrationFactor = 0.980;    //calibration adjustment - set as required if needed (was 1.000)
@@ -110,41 +110,52 @@ int setReading = 0;                           //
 int ControlVolts = 0;                         //used to set output current
 float OutputVoltage = 0;                      //
 
-// String Mode ="  ";                            //used to identify which mode
+uint8_t menu;
 uint8_t mode;
 uint8_t option;
-
 enum {
   CC_MODE, CV_MODE, CR_MODE, CP_MODE,
-  TT_MODE, TL_MODE, TC_MODE, TP_MODE,
+  TC_MODE, TT_MODE, TP_MODE, TL_MODE,
   BC_MODE
 };
-
-enum {
+enum { // options for the main menu
   CC_OPTION, CV_OPTION, CR_OPTION, CP_OPTION,
   TRANSIENT_OPTION, BATCAP_OPTION
+};
+enum { // options for the transient menu
+  TC_OPTION, TT_OPTION, TP_OPTION, TL_OPTION, EXIT_OPTION,
+};
+enum { // screen
+  NO_MENU, MAIN_MENU, TRANSIENT_MENU, BATCAP_MENU
 };
 #define MAX_OPTIONS 6
 
 struct menuoption {
+  uint8_t menu;
   uint8_t option;
   uint8_t mode;
-  char text[10];
+  char text[11];
   uint8_t x, y;
   uint8_t nextoptidx;
+  uint8_t nextmenu;
 };
 
-struct menuoption menubuf;
+struct menuoption menubuf; // buffer for options and transoptions
 
 const struct menuoption PROGMEM options[] = {
-  {CC_OPTION,CC_MODE,"CC",3,2,1},
-  {CV_OPTION,CV_MODE,"CV",7,2,2},
-  {CR_OPTION,CR_MODE,"CR",11,2,3},
-  {CP_OPTION,CP_MODE,"CP",15,2,4},
-  {TRANSIENT_OPTION,0,"TRANSIENT",1,3,5},
-  {BATCAP_OPTION,BC_MODE,"BATCAP",12,3,0}
+  //  menu     menu option       mode     text    x  y nextoptidx(shortpress)  nextmenu(longpress)
+  { MAIN_MENU, CC_OPTION,        CC_MODE, "CC",        3, 2, 1, NO_MENU },
+  { MAIN_MENU, CV_OPTION,        CV_MODE, "CV",        7, 2, 2, NO_MENU },
+  { MAIN_MENU, CR_OPTION,        CR_MODE, "CR",       11, 2, 3, NO_MENU },
+  { MAIN_MENU, CP_OPTION,        CP_MODE, "CP",       15, 2, 4, NO_MENU },
+  { MAIN_MENU, TRANSIENT_OPTION, TP_MODE, "TRANSIENT", 1, 3, 5, TRANSIENT_MENU },
+  { MAIN_MENU, BATCAP_OPTION,    BC_MODE, "BATCAP",   12, 3, 0, NO_MENU },
+  { TRANSIENT_MENU, TC_OPTION,   TC_MODE, "Continuous",3, 1, 7, NO_MENU },
+  { TRANSIENT_MENU, TT_OPTION,   TT_MODE, "Toggle"   , 1, 2, 8, NO_MENU },
+  { TRANSIENT_MENU, TP_OPTION,   TP_MODE, "Pulse"    ,11, 2, 9, NO_MENU },
+  { TRANSIENT_MENU, TL_OPTION,   TL_MODE, "List"     , 1, 3,10, NO_MENU },
+  { TRANSIENT_MENU, EXIT_OPTION, CC_MODE, "Exit"     ,11, 3, 6, MAIN_MENU }
 };
-
 
 int modeSelected = 0;                         //Mode status flag
 
@@ -180,7 +191,7 @@ unsigned long current_time;         //used to store the current time in microsec
 unsigned long last_time;            //used to store the time of the last transient switch in micro seconds
 boolean transient_mode_status;      //used to maintain the state of the trascient mode (false = low current, true = high current)
 
-float transientList [10][2];        //array to store Transient List data
+int transientList [10][2];        //array to store Transient List data
 int total_instructions;             //used in Transient List Mode
 int current_instruction;            //used in Transient List Mode
 
@@ -194,7 +205,8 @@ int loopcount=0;
 unsigned long currentMillis;
 unsigned long lastMillis;
 boolean modeselect;
-boolean togglemodemenu;
+boolean mainmenu_flag;
+boolean transientmenu_flag;
 
 //--------------------------------Interrupt Routine for Rotary Encoder------------------------
 void isr()
@@ -266,7 +278,6 @@ void setup() {
   mode = CC_MODE;
   option = CC_OPTION;
   modeselect=false;
-  togglemodemenu=false;
 }
 
 int doprint;
@@ -307,49 +318,37 @@ void loop()
     Serial.println(encodervelocity);
     #endif
 
-    if (encbutton == SHORT_PRESS) {
-      coarse_flag = !coarse_flag;
-    } 
-
-    if (togglemodemenu) {
-
+    if (menu != NO_MENU) {
       if (loadbutton==SHORT_PRESS) {
         nextOption();
-        //option = rotate_modes();
-        printOptions();
+        //printOptions();
       }
       else if (loadbutton==LONG_PRESS) {
-        togglemodemenu=false;
+        nextMenu(); // next menu by option
+        setFirstOption();
+        printMenu();
+        printOptions();
         setMode();
-        printMode();
       }
-
-    } else { // main menu
-
-      if (encbutton == LONG_PRESS) {
-        userSetUp();
-      }
-      if (loadbutton == SHORT_PRESS) {
-        LoadSwitch();
-      }
-      else if (loadbutton==LONG_PRESS) {
-        togglemodemenu = true;
-        LoadOff();
-        printOptions();
-      }
+    }
+    else { // NO_MENU
 
       switch(mode) {
 
         case CC_MODE: case CV_MODE: case CR_MODE: case CP_MODE:
-          normalWork(encodervelocity);
+          normalWork(loadbutton, encbutton, encodervelocity);
+          if (doprint) printSetPoint(setpoint);
           break;
 
         case TT_MODE: case TL_MODE: case TC_MODE: case TP_MODE:
-          //transientLoadToggle();
+          transientLoadToggle(loadbutton, encbutton);
+          if (doprint) printSetPoint(setCurrent);
+          if (doprint) transient();
+
           break;
 
         case BC_MODE:
-          batteryCapacity();
+          batteryCapacity(loadbutton, encbutton);
           break;
 
         default:
@@ -357,11 +356,11 @@ void loop()
       }
       //transient();                                           //test for Transient Mode
 
-      //if (doprint) printMode();
-      if (doprint) printSetPoint();                        //display rotary encoder input reading on LCD
+      if (doprint) printMode();
+      if (loopcount==100) printActualReading();
+      if (loopcount==200) printTemp(temp);
     }
-    if (loopcount==150) printActualReading();
-    if (doprint) printTemp(temp);
+
 
   }
   //while(millis()-lastMillis<5) {
@@ -373,19 +372,31 @@ void loop()
   //}
 }
 
-void normalWork(uint8_t velo) {
-
+void normalWork(uint8_t loadbutton, uint8_t encbutton, uint8_t velo) {
+  if (encbutton == LONG_PRESS) {
+    userSetUp();
+    return;
+  } else if (encbutton == SHORT_PRESS) {
+    coarse_flag = !coarse_flag;
+    return;
+  } 
+  if (loadbutton == SHORT_PRESS) {
+    LoadSwitch();
+    return;
+  }
+  else if (loadbutton==LONG_PRESS) {
+    LoadOff();
+    menu=MAIN_MENU;
+    setFirstOption();
+    printMenu();
+    printOptions();
+    return;
+  }
   maxConstantCurrentSetting();                           //set maxiumum Current allowed in Constant Current Mode (CC)
   powerLevelCutOff();                                    //Check if Power Limit has been exceeded
   temperatureCutOff();                                   //check if Maximum Temperature is exceeded
   //batteryCurrentLimitValue();                            //Battery Discharge Constant Current Limit Value in BC Mode
   if (velo) {
-    //Serial.print("normalWork: ");
-    //Serial.print(velo);
-    //Serial.print(" ");
-    //Serial.print(setpoint);
-    //Serial.print(" ");
-    //Serial.println(poschange);
     if(velo) {
       if (coarse_flag) {
         setpoint+=poschange*100;
@@ -395,7 +406,7 @@ void normalWork(uint8_t velo) {
 
       if (setpoint>99999) setpoint=99999;
       else if (setpoint<0) setpoint=0;
-      printSetPoint();
+      printSetPoint(setpoint);
     }
   }
  
@@ -541,9 +552,9 @@ void printValue(int value, uint8_t decimals, uint8_t decimalpoint, uint8_t xpos,
     buf[decimals-decimalpoint]='.';
   }
   
-  Serial.print("printValue buf:[");
-  Serial.print(buf);
-  Serial.println("]");
+  //Serial.print("printValue buf:[");
+  //Serial.print(buf);
+  //Serial.println("]");
   //if( value<10 ) offset=2;
   //else if( value<100) offset=1;
   lcd.setCursor(xpos,ypos);
@@ -568,23 +579,46 @@ void printMode(void) {
     lcd.print("CV");
   else if (mode==CR_MODE)
     lcd.print("CR");
+  else if (mode==TL_MODE)
+    lcd.print("TL");
   else
     lcd.print("??");
 }
 
+void printMenu() {
+  lcd.clear();
+  if(menu==MAIN_MENU) {
+    lcd.setCursor(5,0);
+    lcd.print("Main Menu");
+  } else if (menu==TRANSIENT_MENU) {
+    lcd.setCursor(3,0);
+    lcd.print("Transient Menu");
+  }
+}
+
 void printOptions(void) {
+  Serial.println("printOptions");
+  if(menu==NO_MENU) return;
   printClearLine(2);
   printClearLine(3);
   uint8_t arraysize = sizeof(options)/sizeof(options[0]);
+  Serial.print("arraysize ");
+  Serial.println(arraysize);
   for(int i=0; i<arraysize; i++) {
+    Serial.print("i=");
+    Serial.print(i);
     memcpy_P(&menubuf,&options[i],sizeof(menuoption));
-    lcd.setCursor(menubuf.x, menubuf.y);
-    lcd.print(menubuf.text);
+    Serial.print(" menu=");
+    Serial.print(menu);
+    Serial.print(" menubuf.menu=");
+    Serial.println(menubuf.menu);
+    if(menu == menubuf.menu) {
+      lcd.setCursor(menubuf.x, menubuf.y);
+      lcd.print(menubuf.text);
+    }
   }
-
   // get current menu option
   memcpy_P(&menubuf,&options[option],sizeof(menuoption));
-
   // print clams
   lcd.setCursor(menubuf.x-1,menubuf.y);
   lcd.print("[");
@@ -594,11 +628,54 @@ void printOptions(void) {
 }
 
 void nextOption(void) {
+  Serial.println("nextOption");
   memcpy_P(&menubuf,&options[option],sizeof(menuoption));
+  lcd.setCursor(menubuf.x-1,menubuf.y);
+  lcd.print(" "); // clear clams
+  lcd.setCursor(menubuf.x+strlen(menubuf.text),menubuf.y);
+  lcd.print(" ");
   option = menubuf.nextoptidx;
+  memcpy_P(&menubuf,&options[option],sizeof(menuoption));
+  lcd.setCursor(menubuf.x-1,menubuf.y);
+  lcd.print("[");
+  lcd.setCursor(menubuf.x+strlen(menubuf.text),menubuf.y);
+  lcd.print("]");
+  lcd.noCursor();
 }
 
+void nextMenu(void) {
+  Serial.println("nextMenu");
+  memcpy_P(&menubuf,&options[option],sizeof(menuoption));
+  menu = menubuf.nextmenu;
+}
+
+void setFirstOption(void) {
+  if (menu == NO_MENU) return;
+  // find first option
+  uint8_t arraysize = sizeof(options)/sizeof(options[0]);
+  for(int i=0; i<arraysize; i++) {
+    memcpy_P(&menubuf,&options[i],sizeof(menuoption));
+    if(menu==menubuf.menu) {
+      option=i;
+      break;
+    }
+  }
+}
+
+// This function is used for finding out which menu to open based on mode
+//uint8_t find_menuoption_idx_by_mode(uint8_t mode) {
+//  uint8_t arraysize = sizeof(options)/sizeof(options[0]);
+//  for(int i=0; i<arraysize; i++) {
+//    memcpy_P(&menubuf,&options[i],sizeof(menuoption));
+//    if(mode==menubuf.mode)
+//      return i;
+//  }
+//  return 0;
+//}
+
 void setMode(void) {
+  if(menu!=NO_MENU) return;
+  Serial.println("setMode");
   memcpy_P(&menubuf,&options[option],sizeof(menuoption));
   mode = menubuf.mode;
   if(mode==CP_MODE)
@@ -609,8 +686,13 @@ void setMode(void) {
     Voltage();
   else if (mode==CR_MODE)
     Resistance();
-  else
-    lcd.print("??");
+  else if (mode==TL_MODE) {
+    //transientListSetup();
+  } else if (mode==BC_MODE) {
+    BatteryCapacity();
+  }
+  //else
+  //  lcd.print("??");
 }
 
 void printClearLine(uint8_t line) {
@@ -649,14 +731,14 @@ void SetupLimitsScreen(void) {
 }
 
 void printLoadOn(void) {
-  lcd.setCursor(8,0);
-  lcd.print("ON ");
+  lcd.setCursor(0,0);
+  lcd.print("DC LOAD ON ");
   digitalWrite(LoadLED,1);
 }
 
 void printLoadOff(void) {
-  lcd.setCursor(8,0);
-  lcd.print("OFF");
+  lcd.setCursor(0,0);
+  lcd.print("DC LOAD OFF");
   digitalWrite(LoadLED,0);
 }
 
@@ -698,9 +780,9 @@ void printActualReading(void) {
   lcd.print(" ");
 }
 
-void printSetPoint (void) {
+void printSetPoint (int _setpoint) {
   const uint8_t decimals=5, decimalpoint=3, xpos=8, ypos=2;
-  printValue(setpoint, decimals, decimalpoint, xpos, ypos);
+  printValue(_setpoint, decimals, decimalpoint, xpos, ypos);
   lcd.setCursor (CP, 2);
   lcd.cursor();
 }
@@ -887,7 +969,6 @@ void batteryCurrentLimitValue (void) {
 
 //----------------------Display Rotary Encoder Input Reading on LCD---------------------------
 void displayEncoderReading (void) {
-
     lcd.setCursor(8,2);                                      //start position of setting entry
 
     if ( ( mode == CP_MODE || mode == CR_MODE ) && reading < 100 ) {
@@ -910,7 +991,6 @@ void displayEncoderReading (void) {
 //--------------------------Cursor Position-------------------------------------------------------
 //Change cursor the position routine
 void CursorPosition(void) {
-
     // Defaults for two digits before decimal and 3 after decimal point
     int unitPosition = 9;
 
@@ -1071,9 +1151,26 @@ void dacControlVoltage (void) {
 }
 
 //-------------------------------------Battery Capacity Discharge Routine----------------------------------------------------
-void batteryCapacity (void) {
+void batteryCapacity (uint8_t loadbutton, uint8_t encbutton) {
   if (mode != BC_MODE) return;
+  if (encbutton == LONG_PRESS) {
+    userSetUp();
+    return;
+  }
 
+  if (loadbutton == SHORT_PRESS) {
+    LoadSwitch();
+    return;
+  }
+  else if (loadbutton==LONG_PRESS) {
+    LoadOff();
+    menu=MAIN_MENU;
+    setFirstOption();
+    printMenu();
+    printOptions();
+    setMode();
+    return;
+  }
   setCurrent = reading*1000;                             //set current is equal to input value in Amps
   setReading = setCurrent;                               //show the set current reading being used
   setControlCurrent = setCurrent * setCurrentCalibrationFactor;
@@ -1177,13 +1274,9 @@ void LoadOn(void) {
 void Current(void) {
   mode = CC_MODE;
   lcd.setCursor(0,0);
-  lcd.print("DC LOAD");  
+  lcd.print("DC LOAD             ");
   lcd.setCursor(0,2);
-  lcd.print("                ");
-  lcd.setCursor(0,2);
-  lcd.print("Set I = ");
-  lcd.setCursor(16,2);
-  lcd.print("    ");
+  lcd.print("Set I =             ");
   lcd.setCursor(15,2);
   lcd.print("A");
   lcd.setCursor(0,3);                                   //clear last line of time info
@@ -1191,19 +1284,16 @@ void Current(void) {
   lcd.setCursor(18,3);
   lcd.print("CC");
   CP = 9;
+  LoadOff();
 }
 
 //----------------------Select Constant Power LCD set up------------------------------------
 void Power(void) {
   mode = CP_MODE;
   lcd.setCursor(0,0);
-  lcd.print("DC LOAD");
+  lcd.print("DC LOAD             ");
   lcd.setCursor(0,2);
-  lcd.print("                ");
-  lcd.setCursor(0,2);
-  lcd.print("Set W = ");
-  lcd.setCursor(16,2);
-  lcd.print("    ");
+  lcd.print("Set W =             ");
   lcd.setCursor(15,2);
   lcd.print("W");
   lcd.setCursor(0,3);                                   //clear last line of time info
@@ -1211,19 +1301,16 @@ void Power(void) {
   lcd.setCursor(18,3);
   lcd.print("CP");
   CP = 10;                                               //sets cursor starting position to units.
+  LoadOff();
 }
 
 //----------------------- Select Constant Resistance LCD set up---------------------------------------
 void Resistance(void) {
   mode = CR_MODE;
   lcd.setCursor(0,0);
-  lcd.print("DC LOAD");  
+  lcd.print("DC LOAD             ");
   lcd.setCursor(0,2);
-  lcd.print("                ");
-  lcd.setCursor(0,2);
-  lcd.print("Set R = ");
-  lcd.setCursor(16,2);
-  lcd.print("    ");
+  lcd.print("Set R =             ");
   lcd.setCursor(15,2);
   lcd.print((char)0xF4);
   lcd.setCursor(0,3);                                   //clear last line of time info
@@ -1231,18 +1318,15 @@ void Resistance(void) {
   lcd.setCursor(18,3);
   lcd.print("CR");
   CP = 10;                                               //sets cursor starting position to units.
+  LoadOff();
 }
 
 void Voltage(void) {
   mode = CV_MODE;
   lcd.setCursor(0,0);
-  lcd.print("DC LOAD");
+  lcd.print("DC LOAD             ");
   lcd.setCursor(0,2);
-  lcd.print("                ");
-  lcd.setCursor(0,2);
-  lcd.print("Set V = ");
-  lcd.setCursor(16,2);
-  lcd.print("    ");
+  lcd.print("Set V =             ");
   lcd.setCursor(15,2);
   lcd.print("V");
   lcd.setCursor(0,3);                                   //clear last line of time info
@@ -1250,6 +1334,7 @@ void Voltage(void) {
   lcd.setCursor(18,3);
   lcd.print("CV");
   CP = 10;                                               //sets cursor starting position to units.
+  LoadOff();
 }
 //----------------------- Select Battery Capacity Testing LCD set up---------------------------------------
 void BatteryCapacity(void) {
@@ -1377,26 +1462,33 @@ void setBatteryCutOff (void) {
   lcd.clear();
 }
 
-//------------------------Key input used for Battery Cut-Off and Transient Mode------------------------
-uint8_t inputValue (int* value, uint8_t maxvalue, uint8_t decimals, uint8_t decimalpoint, uint8_t xpos, uint8_t ypos) {
+void inputValue (int* value, int maxvalue, int minvalue, uint8_t decimals, uint8_t decimalpoint, uint8_t xpos, uint8_t ypos) {
+  Serial.println("inputValue");
   uint8_t encbutton = 0;
   uint8_t encvelo = 0;
   int LOOP=0;
   int oldvalue=-1; // make it print the first time
-  encoderPosition = *value;
-  uint8_t currentencpos = encoderPosition;
-  
+  //encoderPosition = *value;
+  //uint8_t currentencpos = encoderPosition;
+  if (*value>maxvalue) *value=maxvalue;
+  else if (*value<minvalue) *value=minvalue;
   while(encbutton==0) {
-    //encvelo = EncoderVelocity();
-    currentencpos = encoderPosition; // sample encoderPosition
-    if (currentencpos>maxvalue) {
-      currentencpos=maxvalue;
-      encoderPosition=maxvalue;
+    uint8_t velo = EncoderVelocity();
+    if (velo) {
+      if(velo) {
+        if (decimals>3) {
+          *value+=poschange*100;
+        }
+        else {
+          *value+=poschange;
+        }
+        if (*value>maxvalue) *value=maxvalue;
+        else if (*value<minvalue) *value=minvalue;
+        printValue(*value, decimals, decimalpoint, xpos, ypos);
+      }
     }
-    *value = currentencpos;
     encbutton = EncoderButton();
-    
-    
+
     LOOP++;
     if(LOOP>100) {
       printValue(*value,decimals,decimalpoint,xpos,ypos);
@@ -1484,63 +1576,6 @@ void transientMode (void) {
   }
 }
 
-//----------------------------------------Transient Type Selection--------------------------------------------
-void transientType (void) {
-  toggle = false;                                         //switch Load OFF
-  exitMode = 0;                                           //reset EXIT mode
-  lcd.noCursor();                                         //switch Cursor OFF for this menu               
-  lcd.clear();
-  lcd.setCursor(3,0);
-  lcd.print("Transient Mode");  
-  lcd.setCursor(0,1);
-  lcd.print("1 = Continuous");
-  lcd.setCursor(0,2);
-  lcd.print("2 = Toggle");
-  lcd.setCursor(11,2);                                    //
-  lcd.print("3 = Pulse");                                 //
-  lcd.setCursor(0,3);                                     //
-  lcd.print("4 = List");                                  //
-  lcd.setCursor(11,3);                                    //
-  lcd.print("5 = Exit");                                  //
-
-  //customKey = customKeypad.waitForKey();                  //stop everything till the user press a key.
-
-  //  if (customKey == '1'){
-  //  Mode = ("TC"); 
-  //    }
-  //
-  //  if (customKey == '2'){
-  //   Mode = ("TT");
-  //    }
-  //
-  //  if (customKey == '3'){
-  //  Mode = ("TP");  
-  //    }
-  //
-  //  if (customKey == '4'){
-  //  Mode = ("TL");  
-  //    }
-  //
-  //  if (customKey == '5'){                                  //Exit selection screen
-  //  exitMode = 1;
-  //    }
-  //
-  //  if (customKey == '6' || customKey == '7' || customKey == '8' || customKey == '9' || customKey == '0' || customKey == 'A' || customKey == 'B' || customKey == 'C' || customKey == 'D' || customKey == '*' || customKey == '#' || customKey == 'E' || customKey == 'F' || customKey == '<' || customKey == '>' ){
-  //  transientType();                                                      //ignore other keys
-  //  
-  //    }
-  lcd.clear();
-
-  if (exitMode == 1) {                                    //if NO Transient Mode type selected revert to CC Mode
-    printLoadOff();
-    Current();                                            //if selected go to Constant Current Selected routine
-    encoderPosition = 0;                                  //reset encoder reading to zero
-    //customKey = 'A';
-  } else {
-    transientMode();
-  }
-}
- 
 //----------------------------------------Transient--------------------------------------------
 void transient (void) {
   
@@ -1567,12 +1602,12 @@ void transient (void) {
     }
 
     if (mode == TC_MODE || mode == TP_MODE || mode == TL_MODE) {
-      lcd.setCursor(0,3);
-      lcd.print("Time = ");
-      lcd.setCursor(7,3);
-      lcd.print(transientPeriod);
-      lcd.setCursor(12,3);
-      lcd.print("mSecs");
+      printValue(current_instruction, 2, 0, 0, 3);
+      lcd.print(": ");
+      //void printValue(int value, uint8_t decimals, uint8_t decimalpoint, uint8_t xpos, uint8_t ypos);
+      printValue(transientPeriod, 4, 0, 4, 3);
+      //lcd.print(transientPeriod);
+      lcd.print("ms");
     } else {
      lcd.setCursor(0,3);
      lcd.print("  ");
@@ -1584,7 +1619,6 @@ void transient (void) {
 
 //-------------------------------------Transcient List Setup-------------------------------------------
 void transientListSetup() {
-
   lcd.noCursor();                                                 
   lcd.clear();
   lcd.setCursor(0,0);
@@ -1593,45 +1627,55 @@ void transientListSetup() {
   lcd.print("Enter Number in List");
   lcd.setCursor(0,2);
   lcd.print("(between 2 to 10 max"); 
-  y = 0;
-  z = 0;
-  r = 3;
-  //inputValue();
-  total_instructions = int(x-1);
-  //customKey = '0';
-  lcd.clear();
-  
-  for(int i=0; i<=(total_instructions); i++){
-    lcd.setCursor(0,0);
-    lcd.print("Set Current ");
+  inputValue(&total_instructions,10,2,2,0,0,3);
+  for(uint8_t i=0; i<(total_instructions); i++) {
+    if(i%4 == 0) lcd.clear();
+    lcd.setCursor(0, i & 0x03);
+    lcd.print("I");
     lcd.print(i+1);
-    lcd.setCursor(16,1);
+    lcd.print("=");
+    lcd.setCursor(6,i & 0x03);
     lcd.print("A");
-    y = 0;
-    z = 0;
-    r = 1;
-    //inputValue();            //get the users input value
-    transientList[i][0] = x; //store the users entered value in the transient list 
-    //customKey = '0';
-    lcd.setCursor(0,2);
-    lcd.print("Set Time ");
+    inputValue(&transientList[i][0],50,0,2,1,3,i&0x03);
+    transientList[i][0] = transientList[i][0]*1000;
+    Serial.print("transientList[][0] = ");
+    Serial.println(transientList[i][0]);
+    lcd.setCursor(8,i & 0x03);
+    lcd.print("t");
     lcd.print(i+1);
-    lcd.setCursor(16,3);
-    lcd.print("mSec");
-    y = 0;
-    z = 0;
-    r = 3;
-    //inputValue();            //get the users input value
-    transientList[i][1] = x; //store the users entered value in the transient list
-    //customKey = '0';
-    lcd.clear();   
+    lcd.print("=");
+    lcd.setCursor(17,i&0x03);
+    lcd.print("ms");
+    inputValue(&transientList[i][1],32000,0,5,0,12,i&0x03);
+    Serial.print("transientList[][1] = ");
+    Serial.println(transientList[i][1]);
   }
   current_instruction = 0;      //start at first instrution
+  delay(200);
+  LoadOff();
 }
 
-//-------------------------------------Transcient Load Toggel-------------------------------------------
-void transientLoadToggle() {
-
+//---------------------------Transcient Load Toggel-----------------------------------
+void transientLoadToggle(uint8_t loadbutton, uint8_t encbutton) {
+  if (encbutton == LONG_PRESS) {
+    userSetUp();
+    return;
+  } else if (encbutton == SHORT_PRESS) {
+    transientListSetup();
+    return;
+  }
+  if (loadbutton == SHORT_PRESS) {
+    LoadSwitch();
+    return;
+  }
+  else if (loadbutton==LONG_PRESS) {
+    LoadOff();
+    menu=TRANSIENT_MENU;
+    setFirstOption();
+    printMenu();
+    printOptions();
+    return;
+  }
   if (mode == TC_MODE) {
     current_time = micros();                              //get the current time in micro seconds()
     if (last_time == 0) {
@@ -1654,7 +1698,7 @@ void transientLoadToggle() {
     }
   }
 
-  if (mode == TP_MODE) {
+  else if (mode == TP_MODE) {
     current_time = micros();
     if (last_time == 0) {
       last_time = current_time;
@@ -1671,7 +1715,7 @@ void transientLoadToggle() {
     }
   }
 
- if (mode == TT_MODE) {          // this function will toggle between high and low current when the trigger pin is taken low
+ else if (mode == TT_MODE) {          // this function will toggle between high and low current when the trigger pin is taken low
   if (digitalRead(TriggerPulse) == LOW) {
     switch (transient_mode_status){
 
@@ -1689,33 +1733,39 @@ void transientLoadToggle() {
     }
   }
 
-  if (mode == TL_MODE) {
+  else if (mode == TL_MODE) {
     if (Load == 1) {                                                 //Only perform Transient List if Load is ON
-      current_time = micros();                                       //get the current time in micro seconds()
-      if (last_time == 0){
+      //current_time = micros();                                     //get the current time in micro seconds()
+      current_time = millis();
+      if (last_time == 0) {
         last_time = current_time;
         transientPeriod = transientList[current_instruction][1];    //Time data for LCD display
         transientSwitch(transientList[current_instruction][0], false);
       }
-      if ((current_time - last_time) >= transientList[current_instruction][1] * 1000) {     //move to next list instruction
-        current_instruction++;
-        if (current_instruction > total_instructions) {
-          current_instruction = 0;
-        }
+      if ((current_time - last_time) >= transientPeriod) {     //move to next list instruction
         transientPeriod = transientList[current_instruction][1];   //Time data for LCD display
         transientSwitch(transientList[current_instruction][0], false);
+        Serial.print("instr:");
+        Serial.print(current_instruction);
+        Serial.print(" period:");
+        Serial.print(transientPeriod);
+        Serial.print(" current:");
+        Serial.println(transientList[current_instruction][0]);
+        current_instruction++;
+        if (current_instruction >= total_instructions)
+          current_instruction = 0;
       }
     }
   }
-
 }
 
 //-------------------------------------Transcient Switch-------------------------------------------
-void transientSwitch(float current_setting, boolean toggle_status){
+void transientSwitch(int current_setting, boolean toggle_status){
   if (toggle_status) {
     transient_mode_status = !transient_mode_status;
   }
   setCurrent = current_setting;
+  printSetPoint(setCurrent);
   //Serial.print("set current = ");                     //used for testing only
   //Serial.println(setCurrent);                         //used for testing only
   last_time = current_time;
@@ -1732,14 +1782,14 @@ void userSetUp (void) {
   lcd.setCursor(19,1);
   lcd.print("A");
   const uint8_t xpos=15, ypos=1, decimals=3, decimalpoint=0;
-  inputValue(&CurrentCutOff,CURRENTCUTOFF_MAXLIMIT,decimals,decimalpoint,xpos,ypos);
+  inputValue(&CurrentCutOff,CURRENTCUTOFF_MAXLIMIT,1,decimals,decimalpoint,xpos,ypos);
   EEPROM.write(0x00, CurrentCutOff);
 
   lcd.setCursor(0,2);
   lcd.print("Power Limit  =");
   lcd.setCursor(19,2);
   lcd.print("W");
-  inputValue(&PowerCutOff,255,decimals,decimalpoint,15,2);
+  inputValue(&PowerCutOff,254,1,decimals,decimalpoint,15,2);
   EEPROM.write(0x20, PowerCutOff);              //
 
   lcd.setCursor(0,3);
@@ -1747,13 +1797,13 @@ void userSetUp (void) {
   lcd.setCursor(18,3);
   lcd.print((char)0xDF);
   lcd.print("C");
-  inputValue(&tempCutOff,90,decimals,decimalpoint,15,3);
+  inputValue(&tempCutOff,90,1,decimals,decimalpoint,15,3);
   EEPROM.write(0x40, tempCutOff);
 
   lcd.clear();
   printLoadOff();
-  Current();                                            //if selected go to Constant Current Selected routine
   encoderPosition = 0;                                  //reset encoder reading to zero
+  setMode();
 }
 
 //------------------------------------------High Temperature Cut-Off--------------------------------------------------------------
