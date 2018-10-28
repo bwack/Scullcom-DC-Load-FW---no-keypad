@@ -343,8 +343,6 @@ void loop()
         case TT_MODE: case TL_MODE: case TC_MODE: case TP_MODE:
           transientLoadToggle(loadbutton, encbutton);
           if (doprint) printSetPoint(setCurrent);
-          if (doprint) transient();
-
           break;
 
         case BC_MODE:
@@ -1636,8 +1634,8 @@ void transientListSetup() {
     lcd.print("=");
     lcd.setCursor(6,i & 0x03);
     lcd.print("A");
-    inputValue(&transientList[i][0],50,0,2,1,3,i&0x03);
-    transientList[i][0] = transientList[i][0]*1000;
+    inputValue(&transientList[i][0],50,0,2,1,3,i&0x03); // Amps
+    transientList[i][0] = transientList[i][0]*100;
     Serial.print("transientList[][0] = ");
     Serial.println(transientList[i][0]);
     lcd.setCursor(8,i & 0x03);
@@ -1741,16 +1739,12 @@ void transientLoadToggle(uint8_t loadbutton, uint8_t encbutton) {
         last_time = current_time;
         transientPeriod = transientList[current_instruction][1];    //Time data for LCD display
         transientSwitch(transientList[current_instruction][0], false);
+        transient();
       }
       if ((current_time - last_time) >= transientPeriod) {     //move to next list instruction
         transientPeriod = transientList[current_instruction][1];   //Time data for LCD display
         transientSwitch(transientList[current_instruction][0], false);
-        Serial.print("instr:");
-        Serial.print(current_instruction);
-        Serial.print(" period:");
-        Serial.print(transientPeriod);
-        Serial.print(" current:");
-        Serial.println(transientList[current_instruction][0]);
+        transient();
         current_instruction++;
         if (current_instruction >= total_instructions)
           current_instruction = 0;
